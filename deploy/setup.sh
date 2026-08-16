@@ -69,3 +69,12 @@ PermitRootLogin no
 EOF
 
 systemctl reload ssh
+
+# Installing nginx (config placement happens in redeploy.sh, once the repo is synced)
+echo "==> Installing nginx"
+if ! command -v nginx &>/dev/null; then
+    apt-get install -y nginx
+fi
+
+rm -f /etc/nginx/sites-enabled/default
+systemctl enable --now nginx

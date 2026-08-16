@@ -1,3 +1,5 @@
+name: compute-ledger
+
 services:
   app:
     build: ../src
