@@ -63,3 +63,8 @@ def get_committed_budget(conn):
 def get_next_request_id(conn):
     count = conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
     return f"req_{count + 1:03d}"
+
+def get_queue_depth(conn):
+    return conn.execute(
+        "SELECT COUNT(*) FROM requests WHERE status = 'pending'"
+    ).fetchone()[0]
