@@ -1,0 +1,11 @@
+services:
+  app:
+    build: ../src
+    container_name: compute-ledger
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - LEDGER_DB_PATH=/app/data/ledger.db

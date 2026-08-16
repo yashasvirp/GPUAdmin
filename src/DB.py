@@ -1,8 +1,10 @@
 import sqlite3
 from datetime import datetime
+import os
 
 TOTAL_GPUS = 20
 TOTAL_BUDGET = 43200
+DB_PATH = os.environ.get("LEDGER_DB_PATH", "./ledger.db")
 
 def init_db(conn: sqlite3.Connection):
     conn.execute(
@@ -22,8 +24,9 @@ def init_db(conn: sqlite3.Connection):
     )
     conn.commit()
 
+
 def get_connection():
-    conn = sqlite3.connect('./ledger.db')
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     init_db(conn)
     return conn
