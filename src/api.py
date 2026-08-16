@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Response
 from DB import (
     get_connection, TOTAL_GPUS, TOTAL_BUDGET,
-    get_available_gpus, get_budget_used, get_queue_depth,
+    get_available_gpus, get_budget_used, get_queue_depth, get_overrun_count,
 )
 
 app = FastAPI()
@@ -26,6 +26,7 @@ def metrics():
     slots_active = TOTAL_GPUS - get_available_gpus(conn)
     remaining_percent = (TOTAL_BUDGET - hours_used) / TOTAL_BUDGET * 100
     queue_depth = get_queue_depth(conn)
+    overrun_count = get_overrun_count(conn)
 
     conn.close()
 
@@ -45,6 +46,10 @@ def metrics():
         "# HELP allocation_queue_depth Current number of requests in queue\n"
         "# TYPE allocation_queue_depth gauge\n"
         f"allocation_queue_depth {queue_depth}\n"
+        "\n"
+        "# HELP session_overrun_count Number of sessions currently past their scheduled end time\n"
+        "# TYPE session_overrun_count gauge\n"
+        f"session_overrun_count {overrun_count}\n"
     )
 
     return Response(content=body, media_type="text/plain")

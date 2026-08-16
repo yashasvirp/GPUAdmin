@@ -71,3 +71,18 @@ def get_queue_depth(conn):
     return conn.execute(
         "SELECT COUNT(*) FROM requests WHERE status = 'pending'"
     ).fetchone()[0]
+
+def flag_overruns(conn):
+    """Flip any session past its expiry from 'allocated' to 'overrun'."""
+    conn.execute(
+        "UPDATE requests SET status = 'overrun' "
+        "WHERE status = 'allocated' AND expires_at < ?",
+        (datetime.now().isoformat(),)
+    )
+    conn.commit()
+
+def get_overrun_count(conn):
+    flag_overruns(conn)
+    return conn.execute(
+        "SELECT COUNT(*) FROM requests WHERE status = 'overrun'"
+    ).fetchone()[0]

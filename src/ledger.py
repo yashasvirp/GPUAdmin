@@ -1,6 +1,6 @@
 import typer
 from datetime import datetime, timedelta
-from DB import get_connection, TOTAL_BUDGET, TOTAL_GPUS, get_available_gpus, get_budget_used, get_committed_budget, get_next_request_id
+from DB import get_connection, TOTAL_BUDGET, TOTAL_GPUS, get_available_gpus, get_budget_used, get_committed_budget, get_next_request_id, flag_overruns
 from rich.console import Console
 from rich.table import Table
 
@@ -89,11 +89,7 @@ def status():
     conn = get_connection()
 
     # change status of overrun jobs still running after expiry time
-    conn.execute("UPDATE requests "
-    "SET status = 'overrun' "
-    "WHERE status = 'allocated' AND expires_at < ?",
-    (datetime.now().isoformat(),))
-    conn.commit()
+    flag_overruns(conn)
 
     active_requests = conn.execute("SELECT * FROM requests WHERE status IN ('allocated', 'overrun')").fetchall()
     queue = conn.execute("SELECT * FROM requests WHERE status = 'pending'").fetchall()
