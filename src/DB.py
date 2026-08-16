@@ -2,8 +2,8 @@ import sqlite3
 from datetime import datetime
 import os
 
-TOTAL_GPUS = 20
-TOTAL_BUDGET = 43200
+TOTAL_GPUS = int(os.environ.get("TOTAL_GPUS", 20))
+TOTAL_BUDGET = float(os.environ.get("TOTAL_BUDGET", 43200))
 DB_PATH = os.environ.get("LEDGER_DB_PATH", "./ledger.db")
 
 def init_db(conn: sqlite3.Connection):

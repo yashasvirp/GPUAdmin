@@ -11,3 +11,5 @@ services:
       - ./data:/app/data
     environment:
       - LEDGER_DB_PATH=/app/data/ledger.db
+      - TOTAL_GPUS=${TOTAL_GPUS:-20}
+      - TOTAL_BUDGET=${TOTAL_BUDGET:-43200}
