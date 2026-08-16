@@ -1,0 +1,65 @@
+20 A100 80GB gpus - 1600GB Memory across 2 nodes
+3 month window - Number of GPU hours (budget) = 24*90 days = 2160 hours * 20 GPUs = 43200 hours
+
+System assumptions - 
+You are managing the following resource ( example ): 
+ ●  20 NVIDIA A100 80GB GPUs  across 2 nodes 
+ ●  100 active researchers  under an ANRF grant 
+ ●  Grant window  : 3 months, fixed compute budget 
+ ●  Usage patterns  : training runs ranging from 2 hours (eval) to 7 days  (pretraining) with intermittent usage in between
+
+ Jobs can be given weightage/priority as per duration/user - design choice by the admin/resource owner.
+ Based on time - jobs can be categorised - large (pretriaining runs - 3 to 7 days, medium - 36-72 hours, small - 0-36 hours)
+Also, each user is allocated a compute budget? I am not sure on this.
+
+1. Request and approval workflow  : how does a researcher request GPUs?  Who approves? What information is required in the request? 
+Ans - From my experience, Researcher has to be registered with the ANRF allocation systems who will be provided with credentials to login
+to the system via a head node, and will be allocated some user space (assuming storage space is provided for checkpointing and storing artefacts).
+Once registered, user can provide a request to a slurm (Simple Linux Utility Resource Management?) scheduler via a slurm file or similar utility (CLI tool) to request resources.
+Who approves - This process can be automated via slurm or a CLI tool having access to information regarding resource pool and request pool. Jobs can be assigned automatically based on duration and availability of GPUs.
+large jobs must be manually requested by the researcher and approved by GPU admin.
+Info in the request - user/PI ID, Number of GPUs, job class (eval or pretrain), max duration of the job.
+
+
+2. Fair-use constraints  : how do you prevent one lab from consuming 80% of  the budget? Describe your fairness model (quota per PI, per institution,  time-based caps, or other). 
+Ans - Fair use constraints - Every user gets considered for an equal amount of compute budget initially. However, 432 hours per user doesn't seem enough.
+They can specify their purpose of usage of systems and the kind of jobs that they are largely going to run (train or eval), and request budget beforehand.
+A user running largely eval jobs can be allotted lesser budget than the one running training jobs. 
+Additionally 15% of budget can be reserved/hidden as a pool, and only 85% can be projected to the users so that they can calculate accordingly.
+If a user completes their project within the budget, remaining can be added to the pool. During the last month, the reserve budget can be open to remaining jobs.
+Every user gets a quota of 2 GPUs maximum, and a job duration of 24 hours maximum by default. (In my experience, it was 72 hrs max).
+Every user can be tracked as to how many jobs have they been actively running, and users with less active jobs and more in the queue will be prioritised. Also, recent jobs would be less prioritized.
+Any resources and budget more than that can be allocated to them should be notified to the admin via mail?
+Every job will be allocated on FCFS basis. and if a job runs out after max duration, it will be preempted and requeued until the resource requested is available.
+
+
+3. Preemption rules  : when and how do you preempt a running job? What  notice is given? What does the researcher need to do to make their job  preemption-safe? 
+Ans - Two scenarios of preemption - higher priority job came in and/or job duration is overrun - send a SIGTERM signal to preempt the running job.
+The user can be notified as per job duration when they cross 50% and 80% of duration.
+They can be notified via mail regarding the same, and if any resources are idle, their duration can be increased for upto maximum of 6 hours (design choice) depending upon resource idle time. 
+(I also do not have an answer on what notice is given)
+Every user must be enforced with checkpoint-driven or resume-driven coding for training and inference, and also handle SIGTERM case for preemption, and should be enforced for the same in slurm file or job submission utility.
+Scripts can be written to check if slurm has the requeue mechanism and checkpoint path (We can choose a checkpoint_dir name such as usr_id/job_id/checkpoint/ path is present). 
+If checkpointing is not enforced by the user, their budget cannot be refunded or charged extra for wasting grant budget(is that possible?)
+
+
+4.  Budget tracking  : compute budget is measured in  GPU-hours. How do you  track burn rate? What triggers an alert? What happens when 80% of budget  is consumed?
+Ans - Burn rate - no of GPU hours per day. Avg burn rate could be 43200/90 = 480 hrs per day.
+We can use telemetry data of GPUs (eg - using NVIDIA's DGCM) to track burn rate using monitoring tools?
+Alert can be triggered either when the burn rate is 1.5x the average (design choice) or when it is 0.5x of the average (more idle time - not sure if necessary).
+Another computation is 43200 hours by 3 months - 14400 hours per month. An Alert can be triggered if gpu hours exceed more than 15000 hrs per month.
+Every user is notified when 80% of budget is consumed. Priority of running jobs is sorted in descending order according to user's remaining budget.
+
+
+5.  AISEhack burst  : during a 72-hour hackathon window, 200 external  participants need compute access simultaneously. How does this interact  with your policy? 
+Ans - Assumption - Compute budget of hackathon is not tracked from researcher budget.
+
+Every user of the system will be notified well in advance (~ 7-10 days before the event) about the preemption of jobs, if any, by 2 days before the event happens.
+Extremely high priority jobs will remain in a different partition (exclusive GPU access) unaffected by hackathon. Only 2 of such jobs will be allowed with a maximum of 1 GPU each.
+Such jobs should be notified to the admin well advance, and their requirements should be stated explicitly and possibly minimum.
+2 GPUs are still retained of high priority research jobs, and 3 GPUs in reserve for hackathon. Remaining 15 GPUs can be actively used for Hackathon.
+For 200 participants and 15 GPUs, time bound rotation based GPU allocation can be done for each team. 15 GPUs * 72 hours = 1080 GPU hours.
+1080 GPU hours among 200 participants can be fairly divided ~5.5 hours for each participant in a timely basis. Extra 3 GPUs can be used based on the usage pattern on the first two days, and can be decided to open for hackathon or research on third day.
+Every participant is mandated to offload maximum workload to CPUs, and use GPUs only for ML related compute.
+Once a participant is done with the task with GPUs, memory should be freed so other participants in need of memory could be allocated the same.
+If advanced options (MIG) is available, then during the event every participant will be allocated a fixed amount of VRAM (1600 GB by 200 - 8GB? minimum) to work out along with permission to access external GPUS (Colab).
