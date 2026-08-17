@@ -19,6 +19,13 @@ VM_IP=<your-vm-actual-ip>   # e.g. VM_IP=10.59.27.236 — set this once, for rea
 
 ## Prerequisites
 
+*Tested against a standard cloud-VM image and against `multipass` — both
+default to an `ubuntu` initial user, which this guide assumes throughout.
+Vagrant (different default user, SSH reached via `vagrant ssh-config` rather
+than a plain IP) and Docker-in-Docker (no systemd/SSH daemon by default,
+which `setup.sh` relies on) would need real adaptation, not just a different
+`VM_IP` — treat this guide as multipass/cloud-VM-specific.*
+
 - An Ubuntu 22.04 machine reachable over SSH, with an initial user named
   **`ubuntu`** that has passwordless `sudo` — this is the default on most
   cloud providers (AWS, GCP, DigitalOcean, etc. all provision an `ubuntu`
