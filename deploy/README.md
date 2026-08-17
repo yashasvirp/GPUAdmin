@@ -81,11 +81,44 @@ What it does:
 - Installs nginx and removes its default site (the actual Compute Ledger
   site config gets placed by `redeploy.sh`, once the app code is on the box)
 
-**After this step, log in as `deploy`, not `ubuntu`** — password and root SSH
-login are now disabled, and `ubuntu` is no longer the account you should be
-doing anything as day to day.
+**After this step, log in as `deploy`, not `ubuntu`** for day-to-day work —
+password and root SSH login are now disabled. `ubuntu` still works for
+key-based login (nothing above revokes it), which is what the verification
+and idempotency checks below rely on.
 
-## 2. Point `redeploy.sh` at your VM
+## 2. Verify the bootstrap
+
+Don't just trust the script's own `==>` log lines — confirm it actually did
+what it claims before building on top of it.
+
+**Hardening actually took effect:**
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy ubuntu@$VM_IP 'sudo ufw status'
+# expect: 22/tcp and 80/tcp ALLOW, everything else implicitly denied
+```
+
+Confirm password auth is genuinely rejected, not just configured — this
+should fail with "Permission denied (publickey)", never prompt for a
+password:
+
+```bash
+ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+  -o BatchMode=yes deploy@$VM_IP
+```
+
+**Idempotency** — the entire point of `setup.sh` being idempotent is that
+running it twice is safe. Prove it, don't just assume it:
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy ubuntu@$VM_IP 'sudo bash ~/setup.sh'
+```
+
+Expect every step to report "already exists / already installed, skipping,"
+no errors, and nothing duplicated — e.g. `cat /etc/sudoers.d/deploy` should
+still show exactly one line, not one appended per run.
+
+## 3. Point `redeploy.sh` at your VM
 
 Edit the top of `deploy/redeploy.sh` and set `VM_HOST` to your VM's actual IP
 (the same value you put in `$VM_IP` above) — this file can't read your shell
@@ -100,7 +133,7 @@ SSH_KEY="$HOME/.ssh/compute_ledger_deploy"
 this is the one line you must remember to update — forgetting to will make
 `redeploy.sh` silently try to reach a VM that may no longer exist.
 
-## 3. Set your cluster's actual GPU count and budget (optional)
+## 4. Set your cluster's actual GPU count and budget (optional)
 
 By default the service assumes 20 GPUs and a 43,200 GPU-hour budget. To point
 it at your real cluster instead, copy the example env file and edit it:
@@ -141,7 +174,7 @@ ongoing usage.
   python ledger.py status
   ```
 
-## 4. Deploy
+## 5. Deploy
 
 From the repo root, on your local machine:
 
@@ -164,7 +197,7 @@ This single command:
    and exits with a non-zero status — a failed deploy never leaves the
    service down or half-broken.
 
-## 5. Verify
+## 6. Verify
 
 ```bash
 curl http://$VM_IP/health
@@ -180,6 +213,36 @@ Expected:
   ```bash
   ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP 'curl -s http://localhost/metrics'
   ```
+
+## 7. Exercise the full lifecycle
+
+Confirm the deployed service is a real, working system, not just a container
+that happens to answer `/health`. The CLI (`ledger.py`) is fully available
+inside the running container, sharing the exact same SQLite file as the HTTP
+API — so driving it through the CLI and reading the result back through
+`/metrics` proves both halves agree on the same state:
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py request --user alice --gpus 2 --hours 1'
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py approve req_001'
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py status'
+```
+
+Confirm `/metrics` reflects it — `gpu_slots_active` should now read `2`:
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP 'curl -s http://localhost/metrics'
+```
+
+End the session and confirm the numbers move back down:
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py end req_001'
+```
 
 ## Testing the alerting rules
 
@@ -207,6 +270,43 @@ docker run --rm --entrypoint promtool -v "$(pwd)/deploy:/work" -w /work \
   prom/prometheus:latest check rules alerts.yml
 ```
 
+## Testing resilience
+
+Three things the deployment claims but doesn't prove on its own — worth
+checking deliberately rather than trusting the scripts:
+
+**Reboot survival** — the app must come back with zero manual steps:
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP 'sudo reboot'
+sleep 30
+curl http://$VM_IP/health
+```
+
+**Redeploy idempotency** — running it again with no code changes should be
+clean:
+
+```bash
+./deploy/redeploy.sh
+```
+
+Expect the same "Deployment successful" outcome, no errors, and exactly one
+`compute-ledger` container running afterward (`docker ps` on the VM) — not a
+second one alongside it.
+
+**Rollback on failure** — deliberately break the app, then confirm
+`redeploy.sh` catches it and rolls back instead of leaving the service down.
+For example, temporarily introduce a syntax error in `src/api.py`, then:
+
+```bash
+./deploy/redeploy.sh
+```
+
+Expect: the health check fails for ~30 seconds, `redeploy.sh` prints
+"Rolling back...", exits non-zero, and `curl http://$VM_IP/health` still
+returns `{"status":"ok"}` afterward — the previous, working image, not the
+broken one. Revert the local change once confirmed, and redeploy clean again.
+
 ## Redeploying later
 
 Whenever the code changes, run:
@@ -217,16 +317,6 @@ Whenever the code changes, run:
 
 `setup.sh` never needs to run again on the same VM — it only bootstraps a
 blank machine once. Everything after that is `redeploy.sh`.
-
-## Admin access to a running deployment
-
-The CLI (`ledger.py`) is still fully available inside the running container,
-sharing the exact same database as the HTTP API:
-
-```bash
-ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
-  'docker exec compute-ledger python ledger.py status'
-```
 
 ## Logs
 
