@@ -119,6 +119,28 @@ exists locally in `deploy/`, it gets synced to the VM on every deploy right
 alongside the code. If you skip this step entirely, `docker-compose.prod.yml`
 falls back to the same 20/43,200 defaults, so nothing breaks either way.
 
+**Set this before your first deploy, not partway through.** Changing these
+values on a deployment that already has usage history doesn't reset
+anything — GPU-hours already charged just get reinterpreted against the new
+total, which can produce confusing percentages. Fine to change on a VM
+you're just starting to exercise; avoid changing it on one with real,
+ongoing usage.
+
+**Testing without the VM at all:**
+
+- **Via Docker Compose, locally:** put `deploy/.env` in place as above, then
+  run `docker compose -f deploy/docker-compose.prod.yml up -d --build` from
+  the repo root — same mechanism `redeploy.sh` uses on the VM, just without
+  the SSH/rsync/nginx steps.
+- **Via the raw CLI, no Docker:** `DB.py` reads `TOTAL_GPUS`/`TOTAL_BUDGET`
+  straight from the environment — `deploy/.env` isn't involved at all here —
+  so just export them in your shell first:
+
+  ```bash
+  export TOTAL_GPUS=40 TOTAL_BUDGET=90000
+  python ledger.py status
+  ```
+
 ## 4. Deploy
 
 From the repo root, on your local machine:
@@ -158,6 +180,32 @@ Expected:
   ```bash
   ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP 'curl -s http://localhost/metrics'
   ```
+
+## Testing the alerting rules
+
+`deploy/alerts.yml` isn't wired into a running Prometheus anywhere in this
+stack — there's no Prometheus/Alertmanager service in
+`docker-compose.prod.yml`, so nothing evaluates it against live metrics by
+default. It's tested instead with `promtool`'s built-in unit-testing feature:
+`deploy/alerts_test.yml` defines synthetic time series for each metric and
+asserts which alerts should (and shouldn't) be firing at specific points in
+simulated time — including a negative case for `QueueStarved` that checks it
+does *not* fire when only one half of its compound condition is true.
+
+No local Prometheus install needed — run it via the official image:
+
+```bash
+docker run --rm --entrypoint promtool -v "$(pwd)/deploy:/work" -w /work \
+  prom/prometheus:latest test rules alerts_test.yml
+```
+
+Expected output: `SUCCESS`. You can also sanity-check the rules file's
+syntax alone (no logic testing, just structure) with:
+
+```bash
+docker run --rm --entrypoint promtool -v "$(pwd)/deploy:/work" -w /work \
+  prom/prometheus:latest check rules alerts.yml
+```
 
 ## Redeploying later
 

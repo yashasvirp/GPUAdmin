@@ -1,0 +1,77 @@
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # --- BudgetWarning: must stay < 20 for a full 5m before firing ---
+  - interval: 1m
+    input_series:
+      - series: 'gpu_budget_remaining_percent'
+        # minutes:  0  1  2  3  4  5  6  7  8  9  10
+        values:    '25 25 25 25 18 18 18 18 18 18 18'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: BudgetWarning
+        exp_alerts: []                     # still above 20
+      - eval_time: 8m
+        alertname: BudgetWarning
+        exp_alerts: []                     # below 20, but only ~4m sustained
+      - eval_time: 10m
+        alertname: BudgetWarning
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "GPU budget remaining below 20%"
+              description: "gpu_budget_remaining_percent has been below 20% for over 5 minutes (currently 18%)."
+
+  # --- SessionOverrun: fires immediately, no debounce ---
+  - interval: 1m
+    input_series:
+      - series: 'session_overrun_count'
+        values: '0 0 1 1 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: SessionOverrun
+        exp_alerts: []                     # no overrun yet
+      - eval_time: 2m
+        alertname: SessionOverrun
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "A session has exceeded its scheduled end time"
+              description: "1 session(s) currently overrun."
+
+  # --- QueueStarved: compound condition, sustained 10m ---
+  - interval: 1m
+    input_series:
+      - series: 'allocation_queue_depth'
+        values: '8x11'
+      - series: 'gpu_slots_active'
+        values: '2x11'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: QueueStarved
+        exp_alerts: []                     # both conditions true, but <10m
+      - eval_time: 11m
+        alertname: QueueStarved
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Requests queued while GPU capacity sits idle"
+              description: "8 requests queued while GPU slots remain idle — check for a stuck scheduler or approval bottleneck."
+
+  # --- QueueStarved negative case: queue backed up but slots NOT idle -> must never fire ---
+  - interval: 1m
+    input_series:
+      - series: 'allocation_queue_depth'
+        values: '8x15'
+      - series: 'gpu_slots_active'
+        values: '6x15'                     # 6 >= 4, so the AND never holds
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: QueueStarved
+        exp_alerts: []
