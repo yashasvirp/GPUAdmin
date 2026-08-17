@@ -4,18 +4,31 @@ Takes the Compute Ledger service (Component B) from a local container to a
 running, publicly reachable, reboot-surviving deployment on a single Ubuntu
 22.04 server, fronted by nginx.
 
-Two scripts do all the work: `setup.sh` (run once, on the server, to bootstrap
-a bare VM) and `redeploy.sh` (run from your laptop, every time you want to
-ship the current code).
+**The flow, at a glance:**
 
-Throughout this guide, set `VM_IP` once in your shell and every command below
-just reuses it — this avoids the common mistake of typing a placeholder like
-`<vm-ip>` literally into a command (`<` and `>` are shell redirection syntax,
-so that fails in a confusing way):
+1. Bootstrap the VM once (`setup.sh`)
+2. Verify the bootstrap actually worked
+3. Point `redeploy.sh` at your VM
+4. Set your real GPU count / budget (optional)
+5. Deploy (`redeploy.sh`)
+6. Verify it's reachable, and correctly locked down
+7. Exercise the full lifecycle against the live service
+
+Then, once it's running: prove the alerting rules and failure-handling
+actually work, and know how to redeploy and check logs going forward.
+
+Two scripts do all the work: `setup.sh` (run once, *on* the server) and
+`redeploy.sh` (run from your laptop, every time you ship new code).
+
+Set `VM_IP` once in your shell — every command below reuses it, so you only
+type the real address once:
 
 ```bash
-VM_IP=<your-vm-actual-ip>   # e.g. VM_IP=10.59.27.236 — set this once, for real
+VM_IP=<your-vm-actual-ip>   # e.g. VM_IP=10.59.27.236
 ```
+
+(Don't leave `<vm-ip>` as a literal placeholder in a real command — `<`/`>`
+are shell redirection syntax and will fail in a confusing way.)
 
 ## Prerequisites
 
@@ -27,11 +40,11 @@ which `setup.sh` relies on) would need real adaptation, not just a different
 `VM_IP` — treat this guide as multipass/cloud-VM-specific.*
 
 - An Ubuntu 22.04 machine reachable over SSH, with an initial user named
-  **`ubuntu`** that has passwordless `sudo` — this is the default on most
-  cloud providers (AWS, GCP, DigitalOcean, etc. all provision an `ubuntu`
-  user this way) and on `multipass` VMs. `setup.sh` specifically copies SSH
-  access from this `ubuntu` user to the `deploy` user it creates, so the
-  initial username has to match — this isn't configurable.
+  **`ubuntu`** that has passwordless `sudo` — the default on most cloud
+  providers (AWS, GCP, DigitalOcean, etc.) and on `multipass` VMs.
+  `setup.sh` specifically copies SSH access from this `ubuntu` user to the
+  `deploy` user it creates, so the initial username has to match — this
+  isn't configurable.
 
   If you don't have a cloud VM, use `multipass` locally:
 
@@ -47,9 +60,9 @@ which `setup.sh` relies on) would need real adaptation, not just a different
   ssh-keygen -t ed25519 -f ~/.ssh/compute_ledger_deploy -C "compute-ledger-deploy"
   ```
 
-  - On a real cloud VM, this is usually handled for you at VM creation time
-    (you paste your public key into the provider's UI/CLI, and it gets
-    injected via cloud-init before the VM even boots).
+  - On a real cloud VM, this is usually handled at VM creation time (you
+    paste your public key into the provider's UI/CLI, injected via
+    cloud-init before the VM even boots).
   - On a local `multipass` VM, inject it manually after launch:
 
     ```bash
@@ -67,114 +80,113 @@ which `setup.sh` relies on) would need real adaptation, not just a different
 
 - This repository, cloned locally.
 
-## 1. One-time VM bootstrap
+## 1. Bootstrap the VM
 
-Copy `setup.sh` to the VM and run it as `ubuntu`:
+**What:** copies `setup.sh` to the VM and runs it once, as `ubuntu`.
+**Why:** everything else depends on this — it creates the day-to-day
+`deploy` user, installs Docker, locks down the firewall, hardens SSH, and
+installs nginx. It's idempotent, so re-running it later (interrupted run, or
+just to re-verify) is always safe.
 
 ```bash
 scp -i ~/.ssh/compute_ledger_deploy deploy/setup.sh ubuntu@$VM_IP:~/setup.sh
 ssh -i ~/.ssh/compute_ledger_deploy ubuntu@$VM_IP 'sudo bash ~/setup.sh'
 ```
 
-This step is **idempotent** — safe to run more than once (useful if it's
-interrupted, or if you want to re-verify a box's configuration later).
-
-What it does:
+Specifically, it:
 
 - Creates a `deploy` user with passwordless `sudo` and Docker group membership
 - Installs Docker and enables it to start on boot
 - Installs and configures `ufw`, allowing only SSH (22) and HTTP (80)
 - Hardens SSH: disables password login and root login
-- Installs nginx and removes its default site (the actual Compute Ledger
-  site config gets placed by `redeploy.sh`, once the app code is on the box)
+- Installs nginx and removes its default site (the real site config gets
+  placed by `redeploy.sh`, once app code is actually on the box)
 
-**After this step, log in as `deploy`, not `ubuntu`** for day-to-day work —
+**Expect:** a series of `==>` progress lines, script exits `0`.
+
+**From here on, log in as `deploy`, not `ubuntu`**, for day-to-day work —
 password and root SSH login are now disabled. `ubuntu` still works for
-key-based login (nothing above revokes it), which is what the verification
-and idempotency checks below rely on.
+key-based login (nothing above revokes it), which the checks in the next
+step rely on.
 
 ## 2. Verify the bootstrap
 
-Don't just trust the script's own `==>` log lines — confirm it actually did
-what it claims before building on top of it.
+**What:** confirm `setup.sh` actually did what it claims.
+**Why:** hardening and idempotency are explicit requirements, not just
+claims worth trusting on faith — check them directly.
 
-**Hardening actually took effect:**
+Hardening took effect:
 
 ```bash
 ssh -i ~/.ssh/compute_ledger_deploy ubuntu@$VM_IP 'sudo ufw status'
-# expect: 22/tcp and 80/tcp ALLOW, everything else implicitly denied
 ```
 
-Confirm password auth is genuinely rejected, not just configured — this
-should fail with "Permission denied (publickey)", never prompt for a
-password:
+**Expect:** `22/tcp` and `80/tcp` ALLOW, everything else implicitly denied.
+
+Password auth is genuinely rejected, not just configured:
 
 ```bash
 ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no \
   -o BatchMode=yes deploy@$VM_IP
 ```
 
-**Idempotency** — the entire point of `setup.sh` being idempotent is that
-running it twice is safe. Prove it, don't just assume it:
+**Expect:** `Permission denied (publickey)` — never a password prompt.
+
+Running `setup.sh` a second time should be a no-op:
 
 ```bash
 ssh -i ~/.ssh/compute_ledger_deploy ubuntu@$VM_IP 'sudo bash ~/setup.sh'
 ```
 
-Expect every step to report "already exists / already installed, skipping,"
-no errors, and nothing duplicated — e.g. `cat /etc/sudoers.d/deploy` should
-still show exactly one line, not one appended per run.
+**Expect:** every step reports "already exists / already installed,
+skipping" — no errors, nothing duplicated (e.g. `cat /etc/sudoers.d/deploy`
+still shows exactly one line, not one appended per run).
 
 ## 3. Point `redeploy.sh` at your VM
 
-Edit the top of `deploy/redeploy.sh` and set `VM_HOST` to your VM's actual IP
-(the same value you put in `$VM_IP` above) — this file can't read your shell
-variable, so this has to be a real, literal edit:
+**What:** edit the top of `deploy/redeploy.sh` and set `VM_HOST` to your
+VM's actual IP (the same value as `$VM_IP` above).
+**Why:** the script can't read your shell variable — it needs a real,
+literal edit.
 
 ```bash
 VM_HOST="<your-vm-actual-ip>"
 SSH_KEY="$HOME/.ssh/compute_ledger_deploy"
 ```
 
-**If you're redeploying to a different VM later** (e.g. after recreating it),
-this is the one line you must remember to update — forgetting to will make
+If you redeploy to a different VM later (e.g. after recreating it), this is
+the one line you must remember to update — forgetting to will make
 `redeploy.sh` silently try to reach a VM that may no longer exist.
 
 ## 4. Set your cluster's actual GPU count and budget (optional)
 
-By default the service assumes 20 GPUs and a 43,200 GPU-hour budget. To point
-it at your real cluster instead, copy the example env file and edit it:
+**What:** override the default 20 GPUs / 43,200 GPU-hour budget with your
+real numbers.
+**Why:** skip this and the defaults apply — nothing breaks either way, so
+only bother if your cluster actually differs.
 
 ```bash
 cp deploy/.env.example deploy/.env
 # then edit deploy/.env with your actual TOTAL_GPUS / TOTAL_BUDGET
 ```
 
-`deploy/.env` is gitignored on purpose — it's deployment-specific
-configuration, not code, so it shouldn't be committed or shared across
-different deployments. It still reaches the VM correctly despite that:
-`redeploy.sh`'s `rsync` operates on your local filesystem directly (it has
-no idea what's in `.gitignore`, and doesn't need to), so as long as the file
-exists locally in `deploy/`, it gets synced to the VM on every deploy right
-alongside the code. If you skip this step entirely, `docker-compose.prod.yml`
-falls back to the same 20/43,200 defaults, so nothing breaks either way.
+`deploy/.env` is gitignored — deployment-specific config, not code. It still
+reaches the VM despite that: `redeploy.sh`'s `rsync` copies whatever's on
+your local disk in `deploy/`, regardless of `.gitignore`.
 
-**Set this before your first deploy, not partway through.** Changing these
-values on a deployment that already has usage history doesn't reset
-anything — GPU-hours already charged just get reinterpreted against the new
-total, which can produce confusing percentages. Fine to change on a VM
-you're just starting to exercise; avoid changing it on one with real,
-ongoing usage.
+**Set this before your first deploy, not partway through** — changing it on
+a deployment that already has usage history doesn't reset anything; existing
+GPU-hours just get reinterpreted against the new total, producing confusing
+percentages.
 
-**Testing without the VM at all:**
+**Testing this without a VM at all:**
 
-- **Via Docker Compose, locally:** put `deploy/.env` in place as above, then
-  run `docker compose -f deploy/docker-compose.prod.yml up -d --build` from
-  the repo root — same mechanism `redeploy.sh` uses on the VM, just without
-  the SSH/rsync/nginx steps.
-- **Via the raw CLI, no Docker:** `DB.py` reads `TOTAL_GPUS`/`TOTAL_BUDGET`
-  straight from the environment — `deploy/.env` isn't involved at all here —
-  so just export them in your shell first:
+- **Via Docker Compose, locally:** same `deploy/.env` file, then run
+  `docker compose -f deploy/docker-compose.prod.yml up -d --build` from the
+  repo root — the exact mechanism `redeploy.sh` uses on the VM, minus the
+  SSH/rsync/nginx steps.
+- **Via the raw CLI, no Docker:** `deploy/.env` isn't involved here at all —
+  `DB.py` reads straight from the shell environment:
 
   ```bash
   export TOTAL_GPUS=40 TOTAL_BUDGET=90000
@@ -183,26 +195,25 @@ ongoing usage.
 
 ## 5. Deploy
 
-From the repo root, on your local machine:
-
 ```bash
 ./deploy/redeploy.sh
 ```
 
-This single command:
+One command does five things:
 
-1. `rsync`s the current repo to the VM (excluding `.git`, the local Python
-   venv, `__pycache__`, and any local `.db` files — so a stray local test
-   database can never overwrite the VM's real, persisted one)
-2. Tags the currently-running image as a rollback target (skipped
-   automatically on the very first deploy, since nothing is running yet)
+1. `rsync`s the repo to the VM (excludes `.git`, the local venv,
+   `__pycache__`, and any local `.db` files — a stray local test database
+   can never overwrite the VM's real, persisted one)
+2. Tags the currently-running image as a rollback target (skipped on the
+   very first deploy, since nothing is running yet)
 3. Places the nginx config and reloads nginx
 4. Rebuilds the app image from the freshly-synced code and restarts the
    container via `docker compose`
-5. Polls `/health` for up to ~30 seconds. If the new deployment never
-   becomes healthy, it **automatically rolls back** to the previous image
-   and exits with a non-zero status — a failed deploy never leaves the
-   service down or half-broken.
+5. Polls `/health` for up to ~30 seconds — if it never becomes healthy, it
+   **automatically rolls back** to the previous image and exits non-zero, so
+   a failed deploy never leaves the service down or half-broken
+
+**Expect:** `Deployment successful`.
 
 ## 6. Verify
 
@@ -211,11 +222,11 @@ curl http://$VM_IP/health
 curl http://$VM_IP/metrics
 ```
 
-Expected:
+**Expect:**
 
 - `/health` → `{"status":"ok"}`
-- `/metrics` from your laptop → `403 Forbidden` — this is correct, not a
-  bug; it's restricted to localhost. To actually see it:
+- `/metrics` from your laptop → `403 Forbidden` — correct, not a bug; it's
+  restricted to localhost. To actually see it:
 
   ```bash
   ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP 'curl -s http://localhost/metrics'
@@ -223,11 +234,11 @@ Expected:
 
 ## 7. Exercise the full lifecycle
 
-Confirm the deployed service is a real, working system, not just a container
-that happens to answer `/health`. The CLI (`ledger.py`) is fully available
-inside the running container, sharing the exact same SQLite file as the HTTP
-API — so driving it through the CLI and reading the result back through
-`/metrics` proves both halves agree on the same state:
+**What:** drive the CLI against the live container, then confirm `/metrics`
+agrees with it.
+**Why:** proves this is a real, working system — not just a container that
+happens to answer `/health`. The CLI (`ledger.py`) and the HTTP API share
+the exact same SQLite file, so this checks both sides tell the same story.
 
 ```bash
 ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
@@ -238,7 +249,7 @@ ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
   'docker exec compute-ledger python ledger.py status'
 ```
 
-Confirm `/metrics` reflects it — `gpu_slots_active` should now read `2`:
+**Expect:** `gpu_slots_active` in `/metrics` now reads `2`:
 
 ```bash
 ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP 'curl -s http://localhost/metrics'
@@ -251,38 +262,37 @@ ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
   'docker exec compute-ledger python ledger.py end req_001'
 ```
 
-## Testing the alerting rules
+## Prove it's solid
+
+Two things the deployment claims but doesn't demonstrate on its own — worth
+checking deliberately rather than trusting the scripts.
+
+### Alerting rules
 
 `deploy/alerts.yml` isn't wired into a running Prometheus anywhere in this
 stack — there's no Prometheus/Alertmanager service in
 `docker-compose.prod.yml`, so nothing evaluates it against live metrics by
-default. It's tested instead with `promtool`'s built-in unit-testing feature:
-`deploy/alerts_test.yml` defines synthetic time series for each metric and
-asserts which alerts should (and shouldn't) be firing at specific points in
-simulated time — including a negative case for `QueueStarved` that checks it
-does *not* fire when only one half of its compound condition is true.
-
-No local Prometheus install needed — run it via the official image:
+default. It's tested instead with `promtool`'s unit-testing feature:
+`deploy/alerts_test.yml` feeds synthetic time series through the rules and
+asserts which alerts should (and shouldn't) fire — including a negative case
+proving `QueueStarved` needs *both* halves of its compound condition, not
+just one.
 
 ```bash
 docker run --rm --entrypoint promtool -v "$(pwd)/deploy:/work" -w /work \
   prom/prometheus:latest test rules alerts_test.yml
 ```
 
-Expected output: `SUCCESS`. You can also sanity-check the rules file's
-syntax alone (no logic testing, just structure) with:
+**Expect:** `SUCCESS`. Syntax-only check (structure, not logic):
 
 ```bash
 docker run --rm --entrypoint promtool -v "$(pwd)/deploy:/work" -w /work \
   prom/prometheus:latest check rules alerts.yml
 ```
 
-## Testing resilience
+### Resilience
 
-Three things the deployment claims but doesn't prove on its own — worth
-checking deliberately rather than trusting the scripts:
-
-**Reboot survival** — the app must come back with zero manual steps:
+**Reboot survival** — must come back with zero manual steps:
 
 ```bash
 ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP 'sudo reboot'
@@ -297,26 +307,26 @@ clean:
 ./deploy/redeploy.sh
 ```
 
-Expect the same "Deployment successful" outcome, no errors, and exactly one
+**Expect:** the same `Deployment successful` outcome, and exactly one
 `compute-ledger` container running afterward (`docker ps` on the VM) — not a
 second one alongside it.
 
-**Rollback on failure** — deliberately break the app, then confirm
-`redeploy.sh` catches it and rolls back instead of leaving the service down.
-For example, temporarily introduce a syntax error in `src/api.py`, then:
+**Rollback on failure** — break the app on purpose, confirm `redeploy.sh`
+catches it instead of leaving the service down. For example, temporarily
+introduce a syntax error in `src/api.py`, then:
 
 ```bash
 ./deploy/redeploy.sh
 ```
 
-Expect: the health check fails for ~30 seconds, `redeploy.sh` prints
-"Rolling back...", exits non-zero, and `curl http://$VM_IP/health` still
-returns `{"status":"ok"}` afterward — the previous, working image, not the
-broken one. Revert the local change once confirmed, and redeploy clean again.
+**Expect:** the health check fails for ~30 seconds, `redeploy.sh` prints
+"Rolling back...", exits non-zero, and `curl http://$VM_IP/health`
+afterward still returns `{"status":"ok"}` — the previous, working image, not
+the broken one. Revert the local change once confirmed, and redeploy clean.
 
-## Redeploying later
+## Ongoing operations
 
-Whenever the code changes, run:
+**Redeploy whenever the code changes:**
 
 ```bash
 ./deploy/redeploy.sh
@@ -325,7 +335,7 @@ Whenever the code changes, run:
 `setup.sh` never needs to run again on the same VM — it only bootstraps a
 blank machine once. Everything after that is `redeploy.sh`.
 
-## Logs
+**Logs:**
 
 ```bash
 ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP 'docker logs compute-ledger'
