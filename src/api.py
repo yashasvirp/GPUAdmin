@@ -8,14 +8,17 @@ app = FastAPI()
 
 @app.get("/health")
 def health():
+    conn = None
     try:
         # Checking if it can actually open database and run real query on it
         conn = get_connection()
         conn.execute("SELECT 1")
-        conn.close()
         return {"status": "ok"}
     except Exception:
         return Response(content='{"status": "error"}', status_code=503, media_type="application/json") # 503 - this service can't currently handle requests
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 @app.get("/metrics")
