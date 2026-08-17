@@ -6,3 +6,6 @@ venv/
 *.db-journal
 .env
 .DS_Store
+policy.txt
+deploy/runbook.txt
+policy/ALLOCATION_POLICY.pdf

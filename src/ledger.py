@@ -143,8 +143,10 @@ def status():
     summary_table = Table(title="Summary")
     summary_table.add_column("Metric")
     summary_table.add_column("Value", justify="right")
+    consumed_percent = budget_used / TOTAL_BUDGET * 100
+
     summary_table.add_row("GPUs in use", f"{used_gpus} / {TOTAL_GPUS}")
-    summary_table.add_row("GPU-hours used", f"{budget_used:.1f} / {TOTAL_BUDGET}")
+    summary_table.add_row("GPU-hours used", f"{budget_used:.1f} / {TOTAL_BUDGET} ({consumed_percent:.1f}%)")
 
     remaining_str = f"{remaining:.1f} GPU-hours ({remaining_percent:.1f}%)"
     if remaining_percent < 20:

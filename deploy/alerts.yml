@@ -1,0 +1,29 @@
+groups:
+  - name: compute_ledger_alerts
+    rules:
+      - alert: BudgetWarning
+        expr: gpu_budget_remaining_percent < 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU budget remaining below 20%"
+          description: "gpu_budget_remaining_percent has been below 20% for over 5 minutes (currently {{ $value }}%)."
+
+      - alert: SessionOverrun
+        expr: session_overrun_count > 0
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "A session has exceeded its scheduled end time"
+          description: "{{ $value }} session(s) currently overrun."
+
+      - alert: QueueStarved
+        expr: allocation_queue_depth > 5 and gpu_slots_active < 4
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Requests queued while GPU capacity sits idle"
+          description: "{{ $value }} requests queued while GPU slots remain idle — check for a stuck scheduler or approval bottleneck."
