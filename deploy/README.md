@@ -115,10 +115,19 @@ step rely on.
 **Why:** hardening and idempotency are explicit requirements, not just
 claims worth trusting on faith — check them directly.
 
+`deploy` can actually log in via key — everything from Step 3 onward assumes
+this works, so confirm it now rather than discovering otherwise later:
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP whoami
+```
+
+**Expect:** `deploy`.
+
 Hardening took effect:
 
 ```bash
-ssh -i ~/.ssh/compute_ledger_deploy ubuntu@$VM_IP 'sudo ufw status'
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP 'sudo ufw status'
 ```
 
 **Expect:** `22/tcp` and `80/tcp` ALLOW, everything else implicitly denied.
@@ -132,7 +141,10 @@ ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no \
 
 **Expect:** `Permission denied (publickey)` — never a password prompt.
 
-Running `setup.sh` a second time should be a no-op:
+Running `setup.sh` a second time should be a no-op. This one stays as
+`ubuntu`, not `deploy` — the script was `scp`'d to `/home/ubuntu/setup.sh`
+in Step 1 and never copied anywhere else, so `~/setup.sh` only resolves
+correctly from that account:
 
 ```bash
 ssh -i ~/.ssh/compute_ledger_deploy ubuntu@$VM_IP 'sudo bash ~/setup.sh'
