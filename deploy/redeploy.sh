@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VM_HOST="10.136.243.228"
+VM_HOST=""
 SSH_KEY="$HOME/.ssh/compute_ledger_deploy"
 REMOTE_DIR="/home/deploy/compute-ledger"
 HEALTH_URL="http://${VM_HOST}/health"
