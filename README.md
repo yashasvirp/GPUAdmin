@@ -8,7 +8,7 @@ Three equally-weighted components:
 
 | | What | Where |
 |---|---|---|
-| **A** | Allocation policy — request/approval, fairness, preemption, budget tracking, burst handling | [`policy/ALLOCATION_POLICY.md`](policy/ALLOCATION_POLICY.md) |
+| **A** | Allocation policy — request/approval, fairness, preemption, budget tracking, burst handling | [`policy/ALLOCATION_POLICY.pdf`](policy/ALLOCATION_POLICY.pdf) |
 | **B** | The CLI itself — request/approve/status/end lifecycle, SQLite-backed, containerized | [`src/`](src/) |
 | **C** | Deployment — hardened VM, reverse proxy, metrics, alerting, and a runbook | [`deploy/`](deploy/) |
 
@@ -25,7 +25,7 @@ otherwise.
 ## Component A — Allocation Policy
 
 Written policy document, no code to run:
-[`policy/ALLOCATION_POLICY.md`](policy/ALLOCATION_POLICY.md).
+[`policy/ALLOCATION_POLICY.pdf`](policy/ALLOCATION_POLICY.pdf).
 
 ## Component B — Compute Ledger CLI
 
