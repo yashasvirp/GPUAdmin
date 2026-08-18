@@ -20,16 +20,6 @@ actually work, and know how to redeploy and check logs going forward.
 Two scripts do all the work: `setup.sh` (run once, *on* the server) and
 `redeploy.sh` (run from your laptop, every time you ship new code).
 
-Set `VM_IP` once in your shell — every command below reuses it, so you only
-type the real address once:
-
-```bash
-VM_IP=<your-vm-actual-ip>   # e.g. VM_IP=10.59.27.236
-```
-
-(Don't leave `<vm-ip>` as a literal placeholder in a real command — `<`/`>`
-are shell redirection syntax and will fail in a confusing way.)
-
 ## Prerequisites
 
 *Tested against a standard cloud-VM image and against `multipass` — both
@@ -52,6 +42,16 @@ which `setup.sh` relies on) would need real adaptation, not just a different
   multipass launch 22.04 --name compute-ledger --cpus 2 --memory 2G --disk 10G
   multipass list   # note the IPv4 address, then: VM_IP=<that address>
   ```
+
+  Set `VM_IP` once in the shell — every command below reuses it, so you only
+  type the real address once:
+
+  ```bash
+  VM_IP=<your-vm-actual-ip>   # e.g. VM_IP=10.59.27.236
+  ```
+
+  (Don't leave `<vm-ip>` as a literal placeholder in a real command — `<`/`>`
+  are shell redirection syntax and will fail in a confusing way.)
 
 - An SSH keypair on your local machine, with the **public** key already
   authorized for that `ubuntu` user. If you don't have one yet:
@@ -82,9 +82,8 @@ which `setup.sh` relies on) would need real adaptation, not just a different
 
 ## 1. Bootstrap the VM
 
-**What:** copies `setup.sh` to the VM and runs it once, as `ubuntu`.
-**Why:** everything else depends on this — it creates the day-to-day
-`deploy` user, installs Docker, locks down the firewall, hardens SSH, and
+**What:** copies `setup.sh` to the VM and runs it once, as `ubuntu`.  
+**Why:** It creates the day-to-day `deploy` user, installs Docker, locks down the firewall, hardens SSH, and
 installs nginx. It's idempotent, so re-running it later (interrupted run, or
 just to re-verify) is always safe.
 
@@ -98,7 +97,7 @@ Specifically, it:
 - Creates a `deploy` user with passwordless `sudo` and Docker group membership
 - Installs Docker and enables it to start on boot
 - Installs and configures `ufw`, allowing only SSH (22) and HTTP (80)
-- Hardens SSH: disables password login and root login
+- Disables password login and root login (hardens SSH)
 - Installs nginx and removes its default site (the real site config gets
   placed by `redeploy.sh`, once app code is actually on the box)
 
@@ -111,11 +110,10 @@ step rely on.
 
 ## 2. Verify the bootstrap
 
-**What:** confirm `setup.sh` actually did what it claims.
-**Why:** hardening and idempotency are explicit requirements, not just
-claims worth trusting on faith — check them directly.
+**What:** confirm `setup.sh` worked as intended.  
+**Why:** check hardening and idempotency directly.
 
-`deploy` can actually log in via key — everything from Step 3 onward assumes
+`deploy` can log in via key — everything from Step 3 onward assumes
 this works, so confirm it now rather than discovering otherwise later:
 
 ```bash
@@ -141,7 +139,7 @@ ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no \
 
 **Expect:** `Permission denied (publickey)` — never a password prompt.
 
-Running `setup.sh` a second time should be a no-op. This one stays as
+Running `setup.sh` a second time should not change anything. This one stays as
 `ubuntu`, not `deploy` — the script was `scp`'d to `/home/ubuntu/setup.sh`
 in Step 1 and never copied anywhere else, so `~/setup.sh` only resolves
 correctly from that account:
@@ -156,37 +154,31 @@ still shows exactly one line, not one appended per run).
 
 ## 3. Point `redeploy.sh` at your VM
 
-**What:** edit the top of `deploy/redeploy.sh` and set `VM_HOST` to your
-VM's actual IP (the same value as `$VM_IP` above).
-**Why:** the script can't read your shell variable — it needs a real,
-literal edit.
+**What:** edit the top of `deploy/redeploy.sh` and set `VM_HOST` to VM's actual IP (the same value as `$VM_IP` above).  
 
 ```bash
 VM_HOST="<your-vm-actual-ip>"
 SSH_KEY="$HOME/.ssh/compute_ledger_deploy"
 ```
 
-If you redeploy to a different VM later (e.g. after recreating it), this is
-the one line you must remember to update — forgetting to will make
-`redeploy.sh` silently try to reach a VM that may no longer exist.
+If it is redeployed to a different VM later (e.g. after recreating it), this is the one line that MUST be updated. Else, 
+`redeploy.sh` will silently try to reach a VM that may no longer exist.
 
-## 4. Set your cluster's actual GPU count and budget (optional)
+## 4. Set the cluster's actual GPU count and budget (optional)
 
-**What:** override the default 20 GPUs / 43,200 GPU-hour budget with your
-real numbers.
+**What:** override the default 20 GPUs / 43,200 GPU-hour budget with required real numbers.  
 **Why:** skip this and the defaults apply — nothing breaks either way, so
-only bother if your cluster actually differs.
+only relevant if the cluster numbers have to be experimented with.
 
 ```bash
 cp deploy/.env.example deploy/.env
-# then edit deploy/.env with your actual TOTAL_GPUS / TOTAL_BUDGET
+# then edit deploy/.env with actual TOTAL_GPUS / TOTAL_BUDGET
 ```
 
 `deploy/.env` is gitignored — deployment-specific config, not code. It still
-reaches the VM despite that: `redeploy.sh`'s `rsync` copies whatever's on
-your local disk in `deploy/`, regardless of `.gitignore`.
+reaches the VM despite that: `redeploy.sh`'s `rsync` copies whatever's on local disk in `deploy/`, regardless of `.gitignore`.
 
-**Set this before your first deploy, not partway through** — changing it on
+**Set this before your the deploy, not partway through** — changing it on
 a deployment that already has usage history doesn't reset anything; existing
 GPU-hours just get reinterpreted against the new total, producing confusing
 percentages.
@@ -206,6 +198,8 @@ percentages.
   ```
 
 ## 5. Deploy
+
+redeploy.sh script is the one that carries out deployment - first time and many times later as required.
 
 ```bash
 ./deploy/redeploy.sh
@@ -247,10 +241,9 @@ curl http://$VM_IP/metrics
 ## 7. Exercise the full lifecycle
 
 **What:** drive the CLI against the live container, then confirm `/metrics`
-agrees with it.
-**Why:** proves this is a real, working system — not just a container that
-happens to answer `/health`. The CLI (`ledger.py`) and the HTTP API share
-the exact same SQLite file, so this checks both sides tell the same story.
+agrees with it.  
+**Why:** proves this is a real, working system. The CLI (`ledger.py`) and the HTTP API share
+the exact same SQLite file, so this checks both sides reflect the same circumstances.
 
 ```bash
 ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
@@ -274,10 +267,122 @@ ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
   'docker exec compute-ledger python ledger.py end req_001'
 ```
 
-## Prove it's solid
+**Edge cases worth showing too** — the assignment specifically calls out
+over-request and overrun handling; these exercise both, plus a few other
+non-obvious behaviors. Note whatever `request_id` each `request` call
+actually prints — later commands below reuse it.
 
-Two things the deployment claims but doesn't demonstrate on its own — worth
-checking deliberately rather than trusting the scripts.
+Invalid input, rejected before it ever touches the database:
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py request --user test --gpus 0 --hours 1'
+```
+
+**Expect:** `invalid request`.
+
+A single request exceeding the entire grant budget — a different rejection
+path than "not enough GPUs free":
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py request --user test --gpus 20 --hours 3000'
+```
+
+**Expect:** rejected for exceeding the total grant budget (20 × 3000 =
+60,000 > 43,200).
+
+Over-request against currently available GPUs — the exact scenario named in
+the assignment:
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py request --user bob --gpus 25 --hours 1'
+```
+
+**Expect:** `rejected - requested 25 GPUs, only <N> available`.
+
+Approving something that was never requested:
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py approve req_999'
+```
+
+**Expect:** `req_999 not found!`.
+
+Double-approve:
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py request --user carol --gpus 1 --hours 1'
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py approve req_XXX'
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py approve req_XXX'
+```
+
+**Expect:** the second call says `Cannot approve a non-pending request!`.
+**Clean up immediately** — `end req_XXX` — to free the GPU slot.
+
+`end` on a request that was never approved — cancels rather than errors,
+worth narrating since it isn't obvious behavior:
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py request --user dave --gpus 1 --hours 1'
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py end req_YYY'
+```
+
+**Expect:** `Request req_YYY was pending. Now stands cancelled`. Never held
+a GPU slot at all (pending doesn't count toward usage) — no cleanup needed.
+
+Double-`end`:
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py end req_YYY'
+```
+
+**Expect:** `Request req_YYY already cancelled`.
+
+Overrun flagging — the other edge case the assignment names explicitly:
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py request --user eve --gpus 1 --hours 0.001'
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py approve req_ZZZ'
+sleep 5
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py status'
+```
+
+**Expect:** the active-sessions table shows `req_ZZZ` with status
+`overrun`. **Clean it up immediately** — this one matters more than the
+others, since it also drives `session_overrun_count` in `/metrics`, which
+the live alerting section below assumes starts at zero:
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py end req_ZZZ'
+```
+
+**Checkpoint before moving on:**
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'docker exec compute-ledger python ledger.py status'
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+  'curl -s http://localhost/metrics | grep -E "session_overrun_count|gpu_slots_active"'
+```
+
+**Expect:** `session_overrun_count 0`, `gpu_slots_active 0`. If either
+isn't zero, something above wasn't cleaned up — fix it before continuing;
+the live alerting sections assume a clean starting state.
+
+## Testing Resilience and idempotency
 
 ### Alerting rules
 
@@ -301,6 +406,115 @@ docker run --rm --entrypoint promtool -v "$(pwd)/deploy:/work" -w /work \
 docker run --rm --entrypoint promtool -v "$(pwd)/deploy:/work" -w /work \
   prom/prometheus:latest check rules alerts.yml
 ```
+
+### Alerting rules, live (optional)
+
+The unit tests above prove the rule *logic* is correct against synthetic
+data — that's what's actually required. This section goes a step further,
+proving the same rules against the *real, deployed* service: not required
+by the assignment, but a stronger demonstration than the unit tests alone.
+
+Run a temporary Prometheus instance directly on the VM, using the scrape
+config already checked into this repo (`deploy/prometheus.yml`):
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP 'mkdir -p /tmp/prom-test'
+scp -i ~/.ssh/compute_ledger_deploy deploy/prometheus.yml deploy@$VM_IP:/tmp/prom-test/prometheus.yml
+scp -i ~/.ssh/compute_ledger_deploy deploy/alerts.yml deploy@$VM_IP:/tmp/prom-test/alerts.yml
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP '
+docker run -d --name prom-test --network host \
+  -v /tmp/prom-test/prometheus.yml:/etc/prometheus/prometheus.yml \
+  -v /tmp/prom-test/alerts.yml:/etc/prometheus/alerts.yml \
+  prom/prometheus:latest --config.file=/etc/prometheus/prometheus.yml \
+  --web.listen-address=127.0.0.1:9090
+'
+```
+
+`--network host` matters here: it lets this temporary container reach the
+app's `127.0.0.1:8080` binding directly, and puts Prometheus's own UI on the
+VM's own `localhost:9090` — without opening anything new externally (`ufw`
+still only allows 22/80 in from outside; port 9090 is unreachable off-box).
+
+View it in a browser from the laptop via an SSH tunnel:
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy -f -N -L 9090:localhost:9090 deploy@$VM_IP
+```
+
+Then open `http://localhost:9090` locally. Confirm the target is healthy and
+the rules loaded:
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP 'curl -s http://localhost:9090/api/v1/targets'
+```
+
+**Expect:** `"health":"up"` for the `compute-ledger` job, and all three
+rules listed under `compute_ledger_alerts`, initially `"state":"inactive"`.
+
+To watch one actually fire, force a real overrun and wait for the next
+scrape (use whatever `request_id` the `request` command actually prints):
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP 'docker exec compute-ledger python ledger.py request --user demo --gpus 1 --hours 0.001'
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP 'docker exec compute-ledger python ledger.py approve req_XXX'
+sleep 15
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP 'curl -s http://localhost:9090/api/v1/alerts'
+```
+
+**Expect:** `SessionOverrun` now shows `"state":"firing"`.
+
+**`QueueStarved`, next — reaching `pending`, not `firing`.** Its condition
+is `allocation_queue_depth > 5 and gpu_slots_active < 4`, sustained for a
+full 10 minutes before it actually fires. Sitting through 10 real minutes
+isn't practical here, so this demonstrates the compound condition being
+correctly *detected* — entering `pending` state — without waiting out the
+full duration to `firing`. Still uses the same `prom-test` instance, so do
+this before tearing anything down:
+
+```bash
+for u in q1 q2 q3 q4 q5 q6; do
+  ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+    "docker exec compute-ledger python ledger.py request --user $u --gpus 1 --hours 1"
+done
+sleep 6
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP 'curl -s http://localhost:9090/api/v1/alerts'
+```
+
+Six pending requests (`allocation_queue_depth` = 6 > 5), none approved, so
+`gpu_slots_active` stays at whatever it already was — 0, if the checkpoint
+above was clean.
+
+**Expect:** `QueueStarved` now shows `"state":"pending"`.
+
+**`BudgetWarning` — not demonstrated live, deliberately.** Triggering it
+for real means consuming 80% of the 43,200 GPU-hour budget — at 20 GPUs
+held continuously, that's 72 days. The only way to fake it faster is an
+artificially tiny budget, which either pollutes this real deployment's
+usage history (see the caveat in Step 4) or means standing up a second,
+throwaway deployment just for one alert — disproportionate effort for an
+already-optional demonstration. The `promtool` unit test earlier already
+proves this rule's logic (5 minutes sustained below 20%) correctly; that's
+the intended level of proof for this one.
+
+**Tear down when done** — several things need cleaning up here, not just
+the Prometheus container. Everything below is real ledger state that
+outlives `prom-test` and will keep holding GPU slots / queue entries
+indefinitely if skipped — substitute in the six IDs the `request` loop
+above actually printed:
+
+```bash
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP 'docker exec compute-ledger python ledger.py end req_XXX'   # the overrun session
+for id in req_A req_B req_C req_D req_E req_F; do   # the six queue entries
+  ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP \
+    "docker exec compute-ledger python ledger.py end $id"
+done
+ssh -i ~/.ssh/compute_ledger_deploy deploy@$VM_IP 'docker rm -f prom-test && rm -rf /tmp/prom-test'
+# also kill the local SSH tunnel process (or close the terminal it's running in)
+```
+
+**Expect:** afterward, `session_overrun_count`, `gpu_slots_active`, and
+`allocation_queue_depth` in `/metrics` are all back to zero — check with
+`docker exec compute-ledger python ledger.py status` if unsure.
 
 ### Resilience
 

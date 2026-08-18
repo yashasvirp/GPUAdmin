@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Force a locale that's always present, regardless of whatever the
+# connecting SSH client forwards (sudo on Ubuntu keeps LC_*/LANG by
+# default) — otherwise package postinst scripts using perl warn about
+# an unsupported/ungenerated locale.
+export LANG=C.UTF-8 LC_ALL=C.UTF-8
+
 DEPLOY_USER="deploy"
 
 echo "==> Starting Compute Ledger server bootstrap"
